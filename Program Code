@@ -1,0 +1,151 @@
+from kivy.app import App
+from kivy.uix.widget import Widget
+from kivy.graphics import Color, Line, Rectangle
+from kivy.uix.popup import Popup
+from kivy.uix.colorpicker import ColorPicker
+from kivy.uix.slider import Slider
+from kivy.uix.boxlayout import BoxLayout
+from kivy.uix.button import Button
+from kivy.core.window import Window
+from kivy.properties import NumericProperty
+from kivy.uix.filechooser import FileChooserListView
+from kivy.uix.gridlayout import GridLayout
+from kivy.lang import Builder
+
+# Kivy language for easier UI setup
+Builder.load_string('''
+<FileBrowserPopup>:
+    id: file_browser
+    title: "Select Image"
+    size_hint: (0.9, 0.9)
+    FileChooserListView:
+        id: file_chooser
+        path: '/storage/emulated/0'
+        filters: ['*.png', '*.jpg', '*.jpeg']
+        on_selection: root.load_image(file_chooser.selection)
+''')
+
+class FileBrowserPopup(Popup):
+    def load_image(self, selection):
+        if selection:
+            self.dismiss()
+            app = App.get_running_app()
+            app.painter.load_image(selection[0])
+
+class DrawingWidget(Widget):
+    pen_color = Color(1, 0, 0, 1)  # Initial pen color (red)
+    background_color = Color(1, 1, 1, 1)  # Initial background color (white)
+    line_width = NumericProperty(10)  # Initial pen thickness
+    image = None
+
+    def __init__(self, **kwargs):
+        super(DrawingWidget, self).__init__(**kwargs)
+        self.lines = []
+        self.undo_stack = []
+        self.bind(size=self.update_image_size)
+
+    def update_image_size(self, instance, size):
+        if self.image:
+            self.image.size = size
+
+    def on_touch_down(self, touch):
+        if self.collide_point(*touch.pos):
+            with self.canvas:
+                Color(*self.pen_color.rgba)
+                touch.ud['line'] = Line(points=(touch.x, touch.y), width=self.line_width)
+
+    def on_touch_move(self, touch):
+        if touch.ud.get('line'):
+            touch.ud['line'].points += [touch.x, touch.y]
+
+    def on_touch_up(self, touch):
+        if touch.ud.get('line'):
+            self.lines.append(touch.ud['line'])
+            self.undo_stack.append(self.lines.pop())
+            self.lines.append(self.undo_stack[-1])
+
+    def clear_canvas(self):
+        self.canvas.clear()
+        self.lines = []
+        self.undo_stack = []
+        if self.image:
+            self.canvas.add(self.image)
+
+    def undo(self):
+        if self.lines:
+            self.undo_stack.append(self.lines.pop())
+            self.canvas.clear()
+            if self.image:
+                self.canvas.add(self.image)
+            for line in self.lines:
+                with self.canvas:
+                    Color(*self.pen_color.rgba)
+                    Line(points=line.points, width=self.line_width)
+
+    def select_color(self, mode='pen'):
+        content = BoxLayout(orientation='vertical')
+        cp = ColorPicker()
+        content.add_widget(cp)
+        content.add_widget(Button(text='Select', size_hint_y=None, height=40,
+                                  on_release=lambda x: self.set_color(cp.color, mode)))
+        popup = Popup(title='Choose color', content=content, size_hint=(0.8, 0.8))
+        popup.open()
+
+    def set_color(self, color, mode):
+        if mode == 'pen':
+            self.pen_color.rgba = color
+        else:
+            self.background_color.rgba = color
+            self.canvas.before.clear()
+            with self.canvas.before:
+                Color(*self.background_color.rgba)
+                Rectangle(pos=self.pos, size=self.size)
+
+    def import_image(self):
+        FileBrowserPopup().open()
+
+    def load_image(self, selection):
+        self.image = Rectangle(source=selection, pos=self.pos, size=self.size)
+        self.image.size = self.size  # Ensure it starts at full size
+        self.canvas.clear()
+        with self.canvas:
+            self.canvas.add(self.image)
+
+    def set_line_width(self, instance, value):
+        self.line_width = value
+
+class DrawingApp(App):
+    def build(self):
+        Window.bind(on_resize=self.resize_window)
+        parent = BoxLayout(orientation='vertical')
+        self.painter = DrawingWidget()
+        parent.add_widget(self.painter)
+
+        controls = BoxLayout(size_hint_y=None, height=100)
+        controls.add_widget(Button(text='Pen Color', on_press=lambda x: self.painter.select_color()))
+        controls.add_widget(Button(text='BG Color', on_press=lambda x: self.painter.select_color('bg')))
+        controls.add_widget(Button(text='Clear', on_press=lambda x: self.painter.clear_canvas()))
+        controls.add_widget(Button(text='Undo', on_press=lambda x: self.painter.undo()))
+        controls.add_widget(Button(text='Import Image', on_press=lambda x: self.painter.import_image()))
+
+        slider = Slider(min=5, max=50, value=10)
+        slider.bind(value=self.painter.set_line_width)
+
+        # Place controls at the bottom
+        bottom_panel = BoxLayout(orientation='vertical', size_hint_y=None, height=200)
+        bottom_panel.add_widget(slider)
+        bottom_panel.add_widget(controls)
+        parent.add_widget(bottom_panel)
+
+        return parent
+
+    def resize_window(self, instance, width, height):
+        # Check if there's an image to resize
+        if self.painter.image is not None:
+            self.painter.image.size = (width, height - 200)  # Subtract height of controls
+        else:
+            # If there's no image, you might want to clear or reset something here
+            pass
+
+if __name__ == '__main__':
+    DrawingApp().run()
