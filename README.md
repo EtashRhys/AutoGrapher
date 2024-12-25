@@ -1,1 +1,1 @@
-# AutoGrapher
+# ThickArt
